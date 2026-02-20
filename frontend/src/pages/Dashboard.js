@@ -13,13 +13,14 @@ export default function Dashboard() {
   const [empStats, setEmpStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Test SMS States
-  const [phone, setPhone] = useState('');
-  const [message, setMessage] = useState(
-    'Your salary has been calculated successfully. Basic Pay: ₹50,000 | Tax: ₹5,000 | Net Pay: ₹45,000'
-  );
-  const [smsStatus, setSmsStatus] = useState('');
-  const [smsSending, setSmsSending] = useState(false);
+  // Email states
+  const [senderEmail, setSenderEmail] = useState('');
+  const [senderPassword, setSenderPassword] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [emailMessage, setEmailMessage] = useState('Your salary for this month has been calculated. Please check your payslip.');
+  const [emailStatus, setEmailStatus] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [selectedEmpId, setSelectedEmpId] = useState('');
 
   const currentMonth = new Date().toLocaleString('en-IN', { month: 'long', year: 'numeric' });
   const currentDate = new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -47,34 +48,60 @@ export default function Dashboard() {
     return map[status] || '#94a3b8';
   };
 
-  const sendTestSMS = async () => {
-    if (!phone || phone.length !== 10) {
-      setSmsStatus('❌ Please enter a valid 10-digit phone number.');
+  const sendTestEmail = async () => {
+    if (!senderEmail || !senderPassword || !recipientEmail) {
+      setEmailStatus('❌ Please fill all fields');
       return;
     }
-
-    setSmsSending(true);
-    setSmsStatus('Sending...');
-
+    setEmailSending(true);
+    setEmailStatus('Sending...');
     try {
-      const res = await fetch('http://localhost:5000/api/sms/send-test-sms', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ phone, message }),
-});
-
+      const res = await fetch('http://localhost:5000/api/mail/send-test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderEmail,
+          senderPassword,
+          recipientEmail,
+          subject: 'PayrollPro Test Notification',
+          message: emailMessage,
+        }),
+      });
       const data = await res.json();
-
       if (data.success) {
-        setSmsStatus('✅ SMS sent successfully!');
+        localStorage.setItem('payroll_sender_email', senderEmail);
+        localStorage.setItem('payroll_sender_password', senderPassword);
+        setEmailStatus('✅ Email sent! Credentials saved for payroll notifications.');
       } else {
-        setSmsStatus('❌ Failed: ' + data.error);
+        setEmailStatus('❌ Failed: ' + data.error);
       }
     } catch (err) {
-      setSmsStatus('❌ Error: ' + err.message);
+      setEmailStatus('❌ Error: ' + err.message);
     } finally {
-      setSmsSending(false);
+      setEmailSending(false);
     }
+  };
+
+  const handleProcessPayroll = () => {
+    if (!senderEmail || !senderPassword) {
+      setEmailStatus('❌ Please fill sender email and app password');
+      return;
+    }
+    if (!recipientEmail) {
+      setEmailStatus('❌ Please enter recipient email');
+      return;
+    }
+    if (!selectedEmpId) {
+      setEmailStatus('❌ Please select an Employee ID');
+      return;
+    }
+    // Save everything to localStorage
+    localStorage.setItem('payroll_sender_email', senderEmail);
+    localStorage.setItem('payroll_sender_password', senderPassword);
+    localStorage.setItem('payroll_recipient_email', recipientEmail);
+    localStorage.setItem('payroll_emp_id', selectedEmpId);
+    // Navigate to process payroll
+    navigate('/payroll/process');
   };
 
   return (
@@ -87,9 +114,6 @@ export default function Dashboard() {
           </div>
           <div className="topbar-right">
             <div className="topbar-date">{currentDate}</div>
-            <button className="btn btn-primary btn-sm" onClick={() => navigate('/payroll/process')}>
-              ▶ Process Payroll
-            </button>
           </div>
         </div>
 
@@ -108,7 +132,7 @@ export default function Dashboard() {
           }}>
             <div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, color: 'white' }}>
-                Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {admin?.name?.split(' ')[0]} 👋
+                Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {admin?.name?.split(' ')[0]} 
               </div>
               <div style={{ color: 'var(--slate-400)', fontSize: 14, marginTop: 4 }}>
                 Manage and process payroll for <strong style={{ color: 'var(--amber)' }}>{currentMonth}</strong>
@@ -158,10 +182,7 @@ export default function Dashboard() {
                 </div>
               </div>
               {loading ? (
-                <div className="loading-center">
-                  <span className="spinner" />
-                  Loading...
-                </div>
+                <div className="loading-center"><span className="spinner" />Loading...</div>
               ) : stats?.recentActivity?.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-icon">◎</div>
@@ -171,25 +192,13 @@ export default function Dashboard() {
                 <div>
                   {stats?.recentActivity?.map((p, i) => (
                     <div key={i} style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      padding: '10px 0',
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0',
                       borderBottom: i < stats.recentActivity.length - 1 ? '1px solid var(--border)' : 'none'
                     }}>
-                      <div style={{
-                        width: 8, height: 8, borderRadius: '50%',
-                        background: statusColor(p.status),
-                        boxShadow: `0 0 8px ${statusColor(p.status)}`,
-                        flexShrink: 0
-                      }} />
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: statusColor(p.status), boxShadow: `0 0 8px ${statusColor(p.status)}`, flexShrink: 0 }} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, color: 'white', fontWeight: 600 }}>
-                          {p.employeeRef?.name || p.empId}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)' }}>
-                          {p.month} · {p.employeeRef?.department}
-                        </div>
+                        <div style={{ fontSize: 14, color: 'white', fontWeight: 600 }}>{p.employeeRef?.name || p.empId}</div>
+                        <div style={{ fontSize: 11, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)' }}>{p.month} · {p.employeeRef?.department}</div>
                       </div>
                       <span className={`status-badge ${p.status}`}>{p.status}</span>
                       {p.netSalary && (
@@ -226,110 +235,121 @@ export default function Dashboard() {
                           </span>
                         </div>
                         <div style={{ height: 4, background: 'var(--navy-800)', borderRadius: 2, overflow: 'hidden' }}>
-                          <div style={{
-                            height: '100%',
-                            width: `${pct}%`,
-                            background: `linear-gradient(90deg, var(--amber), var(--teal))`,
-                            borderRadius: 2,
-                            transition: 'width 0.8s ease',
-                          }} />
+                          <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, var(--amber), var(--teal))`, borderRadius: 2, transition: 'width 0.8s ease' }} />
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
-
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', marginTop: 16 }}
-                onClick={() => navigate('/payroll/process')}
-              >
-                ▶ Process New Payroll
-              </button>
             </div>
           </div>
 
-          {/* Test SMS Notification */}
+          {/* ── Email Notification + Process Payroll Card ── */}
           <div className="card" style={{ marginTop: 20 }}>
             <div className="card-header">
               <div>
-                <div className="card-title">📱 Send Test SMS Notification</div>
-                <div className="card-subtitle">Verify SMS integration by sending a test message to any phone number</div>
+                <div className="card-title">📧 Email Notification & Process Payroll</div>
+                <div className="card-subtitle">Fill all details below to send notifications and process payroll</div>
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 8 }}>
-              {/* Phone Input */}
+            <div className="alert alert-info" style={{ marginBottom: 16 }}>
+              <span>💡</span>
               <div>
-                <label style={{ fontSize: 12, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
-                  Phone Number
-                </label>
+                Use Gmail with <strong>App Password</strong>. Generate at <strong>myaccount.google.com/apppasswords</strong>
+              </div>
+            </div>
+
+            {/* Row 1: Sender Gmail + App Password */}
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Sender Gmail</label>
                 <input
-                  type="text"
-                  placeholder="Enter 10-digit phone number"
-                  maxLength={10}
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    background: 'var(--navy-800)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    color: 'white',
-                    fontSize: 14,
-                    fontFamily: 'var(--font-mono)',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                  }}
+                  className="form-control"
+                  type="email"
+                  placeholder="yourname@gmail.com"
+                  value={senderEmail}
+                  onChange={e => setSenderEmail(e.target.value)}
                 />
               </div>
-
-              {/* Message Input */}
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
-                  Message
-                </label>
-                <textarea
-                  rows={3}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    background: 'var(--navy-800)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    color: 'white',
-                    fontSize: 13,
-                    resize: 'none',
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    fontFamily: 'inherit',
-                  }}
+              <div className="form-group">
+                <label className="form-label">App Password</label>
+                <input
+                  className="form-control"
+                  type="text"
+                  placeholder="xxxx xxxx xxxx xxxx"
+                  value={senderPassword}
+                  onChange={e => setSenderPassword(e.target.value)}
                 />
+                <div className="form-hint">Gmail App Password — not your regular Gmail password</div>
               </div>
             </div>
 
-            {/* Send Button + Status */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 14 }}>
+            {/* Row 2: Recipient Email + Employee ID */}
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Recipient Email</label>
+                <input
+                  className="form-control"
+                  type="email"
+                  placeholder="recipient@gmail.com"
+                  value={recipientEmail}
+                  onChange={e => setRecipientEmail(e.target.value)}
+                />
+                <div className="form-hint">Payroll notifications will be sent to this email</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Select Employee</label>
+                <select
+                  className="form-control"
+                  value={selectedEmpId}
+                  onChange={e => setSelectedEmpId(e.target.value)}
+                >
+                  <option value="">-- Select Employee ID --</option>
+                  {['EMP001','EMP002','EMP003','EMP004','EMP005','EMP006','EMP007','EMP008'].map(id => (
+                    <option key={id} value={id}>{id}</option>
+                  ))}
+                </select>
+                <div className="form-hint">Employee whose payroll will be processed</div>
+              </div>
+            </div>
+
+            {/* Row 3: Test Message */}
+            <div className="form-group">
+              <label className="form-label">Test Message</label>
+              <input
+                className="form-control"
+                placeholder="Test payroll notification message"
+                value={emailMessage}
+                onChange={e => setEmailMessage(e.target.value)}
+              />
+            </div>
+
+            {/* Buttons Row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
               <button
-                className="btn btn-primary"
-                onClick={sendTestSMS}
-                disabled={smsSending}
-                style={{ minWidth: 160 }}
+                className="btn btn-outline"
+                onClick={sendTestEmail}
+                disabled={emailSending}
               >
-                {smsSending ? '⏳ Sending...' : '📤 Send Test SMS'}
+                {emailSending ? '⏳ Sending...' : '📧 Send Test Email'}
               </button>
 
-              {smsStatus && (
+              <button
+                className="btn btn-primary btn-lg"
+                onClick={handleProcessPayroll}
+              >
+                ▶ Process Payroll
+              </button>
+
+              {emailStatus && (
                 <span style={{
                   fontSize: 14,
-                  color: smsStatus.includes('✅') ? 'var(--success)' : smsStatus.includes('Sending') ? 'var(--amber)' : '#ef4444',
+                  color: emailStatus.includes('✅') ? 'var(--success)' : emailStatus.includes('Sending') ? 'var(--amber)' : 'var(--danger)',
                   fontFamily: 'var(--font-mono)',
                 }}>
-                  {smsStatus}
+                  {emailStatus}
                 </span>
               )}
             </div>

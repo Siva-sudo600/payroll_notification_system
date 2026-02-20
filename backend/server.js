@@ -5,7 +5,6 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware
 app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -14,12 +13,10 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/payroll', require('./routes/payroll'));
-app.use('/api/sms', require('./routes/testSms'));
+app.use('/api/mail', require('./routes/testMail'));
 
-// Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
-// Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('✅ MongoDB connected');

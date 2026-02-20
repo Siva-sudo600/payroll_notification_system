@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState,useEffect } from 'react';
 import toast from 'react-hot-toast';
 import Sidebar from '../components/Sidebar';
 import { employeeAPI, payrollAPI } from '../services/api';
@@ -16,7 +16,10 @@ export default function ProcessPayroll() {
   const [initiateLoading, setInitiateLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
   const [payslipLoading, setPayslipLoading] = useState(false);
-  const [smsLog, setSmsLog] = useState([]);
+
+  // ✅ emailLog only — no smsLog
+  const [emailLog, setEmailLog] = useState([]);
+  const addEmailLog = (msg) => setEmailLog(prev => [...prev, { msg, time: new Date().toLocaleTimeString() }]);
 
   const [attendance, setAttendance] = useState({
     presentDays: '',
@@ -24,12 +27,69 @@ export default function ProcessPayroll() {
     otherDeductions: 0,
     remarks: '',
   });
+  useEffect(() => {
+  const savedEmpId = localStorage.getItem('payroll_emp_id');
+  if (savedEmpId) {
+    setEmpId(savedEmpId);
+    autoLookup(savedEmpId);
+    localStorage.removeItem('payroll_emp_id'); // clear after use
+  }
+}, []);
 
-  // Current month
+const autoLookup = async (id) => {
+  setLookupLoading(true);
+  try {
+    const { data } = await employeeAPI.lookup(id);
+    setEmployee(data);
+    setStep(1); // ← skip to Step 1 directly
+    toast.success(`Loaded: ${data.name}`);
+  } catch (err) {
+    toast.error('Employee not found');
+  } finally {
+    setLookupLoading(false);
+  }
+};
+
   const today = new Date();
   const monthLabel = today.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
 
-  const addSmsLog = (msg) => setSmsLog(prev => [...prev, { msg, time: new Date().toLocaleTimeString() }]);
+  // ✅ Send email notification at each payroll stage
+ const sendPayrollEmail = async (stage, netSalary = null) => {
+  const senderEmail = localStorage.getItem('payroll_sender_email');
+  const senderPassword = localStorage.getItem('payroll_sender_password');
+  const recipientEmail = localStorage.getItem('payroll_recipient_email');
+
+  console.log('Sending email:', { senderEmail, recipientEmail, stage });
+
+  if (!senderEmail || !senderPassword || !recipientEmail) {
+    addEmailLog(`⚠️ No credentials found. Fill details in Dashboard first.`);
+    return;
+  }
+
+  try {
+    const res = await fetch('http://localhost:5000/api/mail/send-payroll-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        senderEmail,
+        senderPassword,
+        recipientEmail,
+        employeeName: employee.name,
+        stage,
+        month: monthLabel,
+        netSalary,
+      }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      addEmailLog(`📧 Email sent to ${recipientEmail} — Stage: ${stage}`);
+    } else {
+      addEmailLog(`❌ Email failed: ${data.error}`);
+    }
+  } catch (err) {
+    addEmailLog(`❌ Email error: ${err.message}`);
+  }
+};
 
   // ── Step 0: Lookup Employee ──
   const handleLookup = async () => {
@@ -48,36 +108,35 @@ export default function ProcessPayroll() {
   };
 
   // ── Step 1: Initiate Payroll ──
-  const handleInitiate = async () => {
-    setInitiateLoading(true);
-    try {
-      const { data } = await payrollAPI.initiate({ empId: employee.empId });
-      setPayroll(data.payroll);
-      addSmsLog(`📱 SMS sent: "Payroll process for ${monthLabel} has been started"`);
+const handleInitiate = async () => {
+  setInitiateLoading(true);
+  try {
+    const { data } = await payrollAPI.initiate({ empId: employee.empId });
+    setPayroll(data.payroll);
+    setStep(2);
+    await sendPayrollEmail('initiated');
+    toast.success('Payroll initiated! Employee notified via Email.');
+  } catch (err) {
+    const msg = err.response?.data?.message || 'Failed to initiate payroll';
+    if (err.response?.status === 409) {
+      setPayroll(err.response.data.payroll);
+      toast(msg, { icon: 'ℹ️' });
       setStep(2);
-      toast.success('Payroll initiated! Employee notified via SMS.');
-    } catch (err) {
-      const msg = err.response?.data?.message || 'Failed to initiate payroll';
-      if (err.response?.status === 409) {
-        // Already exists
-        setPayroll(err.response.data.payroll);
-        toast(msg, { icon: 'ℹ️' });
-        setStep(2);
-      } else {
-        toast.error(msg);
-      }
-    } finally {
-      setInitiateLoading(false);
+      await sendPayrollEmail('initiated'); // ✅ added here too
+    } else {
+      toast.error(msg);
     }
-  };
-
+  } finally {
+    setInitiateLoading(false);
+  }
+};
   // ── Step 2: Calculate Salary ──
   const handleCalculate = async () => {
     if (!attendance.presentDays || +attendance.presentDays < 0) {
       return toast.error('Please enter valid present days');
     }
     if (+attendance.presentDays > employee.totalWorkingDays) {
-      return toast.error(`Present days cannot exceed ${employee.totalWorkingDays} (total working days)`);
+      return toast.error(`Present days cannot exceed ${employee.totalWorkingDays}`);
     }
     setCalcLoading(true);
     try {
@@ -89,9 +148,9 @@ export default function ProcessPayroll() {
         remarks: attendance.remarks,
       });
       setPayroll(data.payroll);
-      addSmsLog(`📱 SMS sent to ${employee.name}: "Your salary for ${monthLabel} has been calculated. Net: ₹${fmt(data.payroll.netSalary)}"`);
       setStep(3);
-      toast.success('Salary calculated! Employee notified via SMS.');
+      await sendPayrollEmail('calculated', data.payroll.netSalary);
+      toast.success('Salary calculated! Employee notified via Email.');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Calculation failed');
     } finally {
@@ -100,26 +159,27 @@ export default function ProcessPayroll() {
   };
 
   // ── Step 3: Generate Payslip ──
-  const handleGeneratePayslip = async () => {
-    setPayslipLoading(true);
-    try {
-      await payrollAPI.generatePayslip(payroll._id);
-      addSmsLog(`📱 SMS sent to ${employee.name}: "Your payslip for ${monthLabel} has been generated and will be sent shortly"`);
-      toast.success('Payslip generated! Employee notified via SMS.');
-      setPayroll(prev => ({ ...prev, payslipGenerated: true }));
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to generate payslip');
-    } finally {
-      setPayslipLoading(false);
-    }
-  };
-
+ const handleGeneratePayslip = async () => {
+  setPayslipLoading(true);
+  try {
+    await payrollAPI.generatePayslip(payroll._id);
+    await sendPayrollEmail('payslip');
+    toast.success('Payslip generated! Employee notified via Email.');
+    setPayroll(prev => ({ ...prev, payslipGenerated: true }));
+  } catch (err) {
+    console.error('Payslip error:', err);
+    toast.error(err.response?.data?.message || 'Failed to generate payslip');
+  } finally {
+    setPayslipLoading(false);
+  }
+};
+  // ✅ Reset uses emailLog only
   const handleReset = () => {
     setStep(0);
     setEmpId('');
     setEmployee(null);
     setPayroll(null);
-    setSmsLog([]);
+    setEmailLog([]);
     setAttendance({ presentDays: '', overtimeHours: 0, otherDeductions: 0, remarks: '' });
   };
 
@@ -183,9 +243,7 @@ export default function ProcessPayroll() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, alignItems: 'start' }}>
-            {/* Main Panel */}
             <div>
-
               {/* ── STEP 0: Employee Lookup ── */}
               {step === 0 && (
                 <div className="card">
@@ -195,7 +253,6 @@ export default function ProcessPayroll() {
                       <div className="card-subtitle">Enter the Employee ID to begin payroll processing</div>
                     </div>
                   </div>
-
                   <div style={{ marginBottom: 24 }}>
                     <label className="form-label">Employee ID</label>
                     <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
@@ -208,31 +265,17 @@ export default function ProcessPayroll() {
                         style={{ flex: 1, fontSize: 16 }}
                         autoFocus
                       />
-                      <button
-                        className="btn btn-primary"
-                        onClick={handleLookup}
-                        disabled={lookupLoading}
-                        style={{ minWidth: 120 }}
-                      >
+                      <button className="btn btn-primary" onClick={handleLookup} disabled={lookupLoading} style={{ minWidth: 120 }}>
                         {lookupLoading ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Searching</> : '🔍 Search'}
                       </button>
                     </div>
-                    <div className="form-hint" style={{ marginTop: 8 }}>
-                      Available IDs: EMP001 to EMP008 (run npm run seed if not done)
-                    </div>
+                    <div className="form-hint" style={{ marginTop: 8 }}>Available IDs: EMP001 to EMP008</div>
                   </div>
-
-                  {/* Quick Select */}
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
                     <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Quick Select</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       {['EMP001','EMP002','EMP003','EMP004','EMP005','EMP006','EMP007','EMP008'].map(id => (
-                        <button
-                          key={id}
-                          className="btn btn-outline btn-sm"
-                          onClick={() => { setEmpId(id); }}
-                          style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                        >
+                        <button key={id} className="btn btn-outline btn-sm" onClick={() => setEmpId(id)} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                           {id}
                         </button>
                       ))}
@@ -241,13 +284,12 @@ export default function ProcessPayroll() {
                 </div>
               )}
 
-              {/* ── STEP 1: Employee Found - Initiate ── */}
+              {/* ── STEP 1: Initiate Payroll ── */}
               {step === 1 && employee && (
                 <div className="card">
                   <div className="card-header">
                     <div className="card-title">⚡ Initiate Payroll</div>
                   </div>
-
                   <div className="emp-card">
                     <div className="emp-avatar-large">{getInitials(employee.name)}</div>
                     <div className="emp-details">
@@ -258,19 +300,11 @@ export default function ProcessPayroll() {
                         <span className="emp-tag desig">{employee.designation}</span>
                       </div>
                       <div style={{ marginTop: 10, display: 'flex', gap: 20, fontSize: 13 }}>
-                        <div>
-                          <span style={{ color: 'var(--slate-400)' }}>📧 </span>
-                          <span style={{ color: 'var(--slate-300)' }}>{employee.email}</span>
-                        </div>
-                        <div>
-                          <span style={{ color: 'var(--slate-400)' }}>📱 </span>
-                          <span style={{ color: 'var(--slate-300)', fontFamily: 'var(--font-mono)' }}>{employee.phone}</span>
-                        </div>
+                        <div><span style={{ color: 'var(--slate-400)' }}>📧 </span><span style={{ color: 'var(--slate-300)' }}>{employee.email}</span></div>
+                        <div><span style={{ color: 'var(--slate-400)' }}>📱 </span><span style={{ color: 'var(--slate-300)', fontFamily: 'var(--font-mono)' }}>{employee.phone}</span></div>
                       </div>
                     </div>
                   </div>
-
-                  {/* Salary structure preview */}
                   <div style={{ marginBottom: 24 }}>
                     <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Salary Structure</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -282,46 +316,27 @@ export default function ProcessPayroll() {
                         { label: 'Medical', value: employee.medicalAllowance },
                         { label: 'Special Allowance', value: employee.specialAllowance },
                       ].map((item) => (
-                        <div key={item.label} style={{
-                          background: 'var(--navy-800)', borderRadius: 'var(--radius)',
-                          padding: '10px 14px', border: '1px solid var(--border)',
-                          display: 'flex', justifyContent: 'space-between',
-                        }}>
+                        <div key={item.label} style={{ background: 'var(--navy-800)', borderRadius: 'var(--radius)', padding: '10px 14px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ fontSize: 12, color: 'var(--slate-400)' }}>{item.label}</span>
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'white' }}>₹{fmt(item.value)}</span>
                         </div>
                       ))}
                     </div>
-                    <div style={{
-                      background: 'linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.05))',
-                      border: '1px solid var(--border-accent)',
-                      borderRadius: 'var(--radius)', padding: '12px 14px', marginTop: 10,
-                      display: 'flex', justifyContent: 'space-between',
-                    }}>
+                    <div style={{ background: 'linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.05))', border: '1px solid var(--border-accent)', borderRadius: 'var(--radius)', padding: '12px 14px', marginTop: 10, display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: 13, color: 'var(--amber-light)', fontWeight: 600 }}>Gross (at full attendance)</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--amber)', fontWeight: 700 }}>
                         ₹{fmt(employee.basicPay + employee.hra + employee.da + employee.ta + employee.medicalAllowance + employee.specialAllowance)}
                       </span>
                     </div>
                   </div>
-
                   <div className="alert alert-info">
-                    <span>📱</span>
-                    <span>Clicking "Initiate Payroll" will send an SMS to {employee.name} notifying them the payroll process has started.</span>
+                    <span>📧</span>
+                    <span>Clicking "Initiate Payroll" will send an email to <strong style={{color: 'var(--amber)'}}>{localStorage.getItem('payroll_recipient_email')}</strong> notifying them the payroll process has started.</span>
                   </div>
-
                   <div style={{ display: 'flex', gap: 12 }}>
                     <button className="btn btn-outline" onClick={() => setStep(0)}>← Back</button>
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleInitiate}
-                      disabled={initiateLoading}
-                      style={{ flex: 1 }}
-                    >
-                      {initiateLoading
-                        ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Initiating...</>
-                        : '⚡ Initiate Payroll & Notify Employee'
-                      }
+                    <button className="btn btn-primary" onClick={handleInitiate} disabled={initiateLoading} style={{ flex: 1 }}>
+                      {initiateLoading ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Initiating...</> : '⚡ Initiate Payroll & Notify Employee'}
                     </button>
                   </div>
                 </div>
@@ -336,91 +351,41 @@ export default function ProcessPayroll() {
                       <div className="card-subtitle">{employee.name} · {employee.empId} · {monthLabel}</div>
                     </div>
                   </div>
-
                   <div className="form-grid-2">
                     <div className="form-group">
                       <label className="form-label">Days Present *</label>
-                      <input
-                        className="form-control form-control-mono"
-                        type="number"
-                        min="0"
-                        max={employee.totalWorkingDays}
-                        placeholder={`0 - ${employee.totalWorkingDays}`}
-                        value={attendance.presentDays}
-                        onChange={e => setAttendance({ ...attendance, presentDays: e.target.value })}
-                      />
+                      <input className="form-control form-control-mono" type="number" min="0" max={employee.totalWorkingDays} placeholder={`0 - ${employee.totalWorkingDays}`} value={attendance.presentDays} onChange={e => setAttendance({ ...attendance, presentDays: e.target.value })} />
                       <div className="form-hint">Total working days: {employee.totalWorkingDays}</div>
                     </div>
                     <div className="form-group">
                       <label className="form-label">Absent / LOP Days</label>
-                      <input
-                        className="form-control form-control-mono"
-                        type="number"
-                        value={attendance.presentDays ? Math.max(0, employee.totalWorkingDays - +attendance.presentDays) : ''}
-                        readOnly
-                        placeholder="Auto calculated"
-                      />
+                      <input className="form-control form-control-mono" type="number" value={attendance.presentDays ? Math.max(0, employee.totalWorkingDays - +attendance.presentDays) : ''} readOnly placeholder="Auto calculated" />
                       <div className="form-hint">Loss of Pay days</div>
                     </div>
                     <div className="form-group">
                       <label className="form-label">Overtime Hours</label>
-                      <input
-                        className="form-control form-control-mono"
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        placeholder="0"
-                        value={attendance.overtimeHours}
-                        onChange={e => setAttendance({ ...attendance, overtimeHours: e.target.value })}
-                      />
+                      <input className="form-control form-control-mono" type="number" min="0" step="0.5" placeholder="0" value={attendance.overtimeHours} onChange={e => setAttendance({ ...attendance, overtimeHours: e.target.value })} />
                       <div className="form-hint">Paid at 2× hourly rate</div>
                     </div>
                     <div className="form-group">
                       <label className="form-label">Other Deductions (₹)</label>
-                      <input
-                        className="form-control form-control-mono"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={attendance.otherDeductions}
-                        onChange={e => setAttendance({ ...attendance, otherDeductions: e.target.value })}
-                      />
+                      <input className="form-control form-control-mono" type="number" min="0" placeholder="0" value={attendance.otherDeductions} onChange={e => setAttendance({ ...attendance, otherDeductions: e.target.value })} />
                       <div className="form-hint">Additional one-time deduction</div>
                     </div>
                   </div>
-
                   <div className="form-group">
                     <label className="form-label">Remarks</label>
-                    <input
-                      className="form-control"
-                      placeholder="Optional notes (e.g., medical leave approved)"
-                      value={attendance.remarks}
-                      onChange={e => setAttendance({ ...attendance, remarks: e.target.value })}
-                    />
+                    <input className="form-control" placeholder="Optional notes (e.g., medical leave approved)" value={attendance.remarks} onChange={e => setAttendance({ ...attendance, remarks: e.target.value })} />
                   </div>
-
-                  {/* Live preview */}
-                  {attendance.presentDays && (
-                    <LiveSalaryPreview employee={employee} attendance={attendance} />
-                  )}
-
+                  {attendance.presentDays && <LiveSalaryPreview employee={employee} attendance={attendance} />}
                   <div className="alert alert-info" style={{ marginTop: 16 }}>
-                    <span>📱</span>
-                    <span>Employee will receive SMS with calculated net salary upon clicking calculate.</span>
+                    <span>📧</span>
+                    <span>Employee will receive an email with calculated net salary upon clicking calculate.</span>
                   </div>
-
                   <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
                     <button className="btn btn-outline" onClick={() => setStep(1)}>← Back</button>
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleCalculate}
-                      disabled={calcLoading || !attendance.presentDays}
-                      style={{ flex: 1 }}
-                    >
-                      {calcLoading
-                        ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Calculating...</>
-                        : '🧮 Calculate & Notify Employee'
-                      }
+                    <button className="btn btn-primary" onClick={handleCalculate} disabled={calcLoading || !attendance.presentDays} style={{ flex: 1 }}>
+                      {calcLoading ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Calculating...</> : '🧮 Calculate & Notify Employee'}
                     </button>
                   </div>
                 </div>
@@ -428,66 +393,43 @@ export default function ProcessPayroll() {
 
               {/* ── STEP 3: Review & Payslip ── */}
               {step === 3 && payroll && employee && (
-                <div>
-                  <div className="card" style={{ marginBottom: 20 }}>
-                    <div className="card-header">
-                      <div className="card-title">✅ Salary Calculated</div>
-                      <span className={`status-badge ${payroll.status}`}>{payroll.status}</span>
-                    </div>
-
-                    {/* Payslip preview */}
-                    <PayslipPreview employee={employee} payroll={payroll} />
-
-                    <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
-                      <button
-                        className="btn btn-teal"
-                        onClick={handleGeneratePayslip}
-                        disabled={payslipLoading || payroll.payslipGenerated}
-                        style={{ flex: 1 }}
-                      >
-                        {payslipLoading
-                          ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Generating...</>
-                          : payroll.payslipGenerated
-                            ? '✅ Payslip Generated'
-                            : '📄 Generate Payslip & Notify Employee'
-                        }
-                      </button>
-                      <button className="btn btn-outline" onClick={handleReset}>
-                        Process Another Employee
-                      </button>
-                    </div>
-
-                    {payroll.payslipGenerated && (
-                      <div className="sms-indicator" style={{ marginTop: 12 }}>
-                        <span>📱</span>
-                        Employee has been notified about payslip generation.
-                      </div>
-                    )}
+                <div className="card">
+                  <div className="card-header">
+                    <div className="card-title">✅ Salary Calculated</div>
+                    <span className={`status-badge ${payroll.status}`}>{payroll.status}</span>
                   </div>
+                  <PayslipPreview employee={employee} payroll={payroll} />
+                  <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+                    <button className="btn btn-teal" onClick={handleGeneratePayslip} disabled={payslipLoading} style={{ flex: 1 }}>
+                      {payslipLoading ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Generating...</> : payroll.payslipGenerated ? '✅ Payslip Generated' : '📄 Generate Payslip & Notify Employee'}
+                    </button>
+                    <button className="btn btn-outline" onClick={handleReset}>Process Another Employee</button>
+                  </div>
+                  {payroll.payslipGenerated && (
+                    <div className="sms-indicator" style={{ marginTop: 12 }}>
+                      <span>📧</span>
+                      Employee has been notified via email about payslip generation.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Right Panel: SMS Log */}
+            {/* ✅ Right Panel: Email Notifications Log */}
             <div>
               <div className="card" style={{ position: 'sticky', top: 80 }}>
                 <div className="card-header">
-                  <div className="card-title">📱 SMS Notifications</div>
+                  <div className="card-title">📧 Email Notifications</div>
                 </div>
-                {smsLog.length === 0 ? (
+                {emailLog.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--slate-400)' }}>
-                    <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📵</div>
+                    <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>📭</div>
                     <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)' }}>No notifications sent yet</div>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {smsLog.map((log, i) => (
-                      <div key={i} style={{
-                        background: 'rgba(20,184,166,0.06)',
-                        border: '1px solid rgba(20,184,166,0.2)',
-                        borderRadius: 'var(--radius)',
-                        padding: '10px 12px',
-                      }}>
+                    {emailLog.map((log, i) => (
+                      <div key={i} style={{ background: 'rgba(20,184,166,0.06)', border: '1px solid rgba(20,184,166,0.2)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
                         <div style={{ fontSize: 12, color: 'var(--teal-light)', lineHeight: 1.5 }}>{log.msg}</div>
                         <div style={{ fontSize: 10, color: 'var(--slate-400)', fontFamily: 'var(--font-mono)', marginTop: 6 }}>{log.time}</div>
                       </div>
@@ -495,14 +437,10 @@ export default function ProcessPayroll() {
                   </div>
                 )}
 
-                {/* Process guide */}
                 <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
                   <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Process Guide</div>
                   {STEPS.map((s, i) => (
-                    <div key={i} style={{
-                      display: 'flex', gap: 10, alignItems: 'center',
-                      marginBottom: 8, opacity: i > step ? 0.4 : 1,
-                    }}>
+                    <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8, opacity: i > step ? 0.4 : 1 }}>
                       <div style={{
                         width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
                         background: i < step ? 'rgba(34,197,94,0.2)' : i === step ? 'rgba(245,158,11,0.2)' : 'var(--navy-700)',
@@ -531,7 +469,6 @@ function LiveSalaryPreview({ employee, attendance }) {
   const totalWD = employee.totalWorkingDays;
   const pd = +attendance.presentDays || 0;
   const absent = Math.max(0, totalWD - pd);
-
   const basicPay = +(employee.basicPay / totalWD * pd).toFixed(2);
   const hra = +(employee.hra / totalWD * pd).toFixed(2);
   const da = +(employee.da / totalWD * pd).toFixed(2);
@@ -541,7 +478,6 @@ function LiveSalaryPreview({ employee, attendance }) {
   const hourlyRate = employee.basicPay / (totalWD * 8);
   const overtime = +(hourlyRate * (+attendance.overtimeHours || 0) * 2).toFixed(2);
   const gross = +(basicPay + hra + da + ta + medical + special + overtime).toFixed(2);
-
   const pf = +(employee.pf / 100 * basicPay).toFixed(2);
   const esi = +(employee.esi / 100 * gross).toFixed(2);
   const profTax = employee.professionalTax;
@@ -549,62 +485,26 @@ function LiveSalaryPreview({ employee, attendance }) {
   const other = +attendance.otherDeductions || 0;
   const totalDed = +(pf + esi + profTax + incomeTax + other).toFixed(2);
   const net = +(gross - totalDed).toFixed(2);
-
   const fmt = (n) => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(n);
 
   return (
     <div>
-      <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Live Salary Preview
-      </div>
+      <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Live Salary Preview</div>
       <div className="salary-breakdown">
-        <div className="breakdown-row header">
-          <span>Earnings Component</span>
-          <span>Amount (₹)</span>
-        </div>
-        {[
-          ['Basic Pay', basicPay],
-          ['HRA', hra],
-          ['DA', da],
-          ['TA', ta],
-          ['Medical Allowance', medical],
-          ['Special Allowance', special],
-          ...(overtime > 0 ? [['Overtime Pay', overtime]] : []),
-        ].map(([label, val]) => (
-          <div className="breakdown-row" key={label}>
-            <span className="breakdown-label">{label}</span>
-            <span className="breakdown-value">{fmt(val)}</span>
-          </div>
+        <div className="breakdown-row header"><span>Earnings Component</span><span>Amount (₹)</span></div>
+        {[['Basic Pay', basicPay],['HRA', hra],['DA', da],['TA', ta],['Medical Allowance', medical],['Special Allowance', special],...(overtime > 0 ? [['Overtime Pay', overtime]] : [])].map(([label, val]) => (
+          <div className="breakdown-row" key={label}><span className="breakdown-label">{label}</span><span className="breakdown-value">{fmt(val)}</span></div>
         ))}
-        <div className="breakdown-row total">
-          <span>Gross Earnings</span>
-          <span>{fmt(gross)}</span>
-        </div>
-        <div className="breakdown-row header">
-          <span>Deductions</span>
-          <span>Amount (₹)</span>
-        </div>
-        {[
-          [`PF (${employee.pf}% of Basic)`, pf],
-          ...(esi > 0 ? [`ESI (${employee.esi}%)`, esi] : []).map ? [[`ESI (${employee.esi}%)`, esi]] : [],
-          ['Professional Tax', profTax],
-          ['Income Tax (TDS)', incomeTax],
-          ...(other > 0 ? [['Other Deductions', other]] : []),
-        ].map(([label, val]) => (
-          <div className="breakdown-row" key={label}>
-            <span className="breakdown-label">{label}</span>
-            <span className="breakdown-deduct">- {fmt(val)}</span>
-          </div>
+        <div className="breakdown-row total"><span>Gross Earnings</span><span>{fmt(gross)}</span></div>
+        <div className="breakdown-row header"><span>Deductions</span><span>Amount (₹)</span></div>
+        {[[`PF (${employee.pf}% of Basic)`, pf],...(esi > 0 ? [[`ESI (${employee.esi}%)`, esi]] : []),['Professional Tax', profTax],['Income Tax (TDS)', incomeTax],...(other > 0 ? [['Other Deductions', other]] : [])].map(([label, val]) => (
+          <div className="breakdown-row" key={label}><span className="breakdown-label">{label}</span><span className="breakdown-deduct">- {fmt(val)}</span></div>
         ))}
-        <div className="breakdown-row net">
-          <span>NET SALARY PAYABLE</span>
-          <span>₹ {fmt(net)}</span>
-        </div>
+        <div className="breakdown-row net"><span>NET SALARY PAYABLE</span><span>₹ {fmt(net)}</span></div>
       </div>
       {absent > 0 && (
         <div className="alert alert-warning" style={{ marginTop: 10 }}>
-          <span>⚠️</span>
-          <span>{absent} day(s) absent — Loss of Pay applied proportionally</span>
+          <span>⚠️</span><span>{absent} day(s) absent — Loss of Pay applied proportionally</span>
         </div>
       )}
     </div>
@@ -614,7 +514,6 @@ function LiveSalaryPreview({ employee, attendance }) {
 // ── Payslip Preview Component ──
 function PayslipPreview({ employee, payroll }) {
   const fmt2 = (n) => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(n || 0);
-
   return (
     <div className="payslip-preview">
       <div className="payslip-header">
@@ -624,12 +523,9 @@ function PayslipPreview({ employee, payroll }) {
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--slate-300)' }}>Generated</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--slate-400)' }}>
-            {new Date().toLocaleDateString('en-IN')}
-          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--slate-400)' }}>{new Date().toLocaleDateString('en-IN')}</div>
         </div>
       </div>
-
       <div className="payslip-body">
         <div className="payslip-emp-details">
           <span className="pkey">Employee Name</span><span className="pval">{employee.name}</span>
@@ -639,7 +535,6 @@ function PayslipPreview({ employee, payroll }) {
           <span className="pkey">Days Present</span><span className="pval">{payroll.presentDays} / {payroll.totalWorkingDays}</span>
           <span className="pkey">Bank Account</span><span className="pval">****{employee.bankAccount?.slice(-4)}</span>
         </div>
-
         <div className="payslip-tables">
           <div className="payslip-table-section">
             <h4>Earnings</h4>
@@ -652,9 +547,7 @@ function PayslipPreview({ employee, payroll }) {
                 <tr><td>Medical</td><td>{fmt2(payroll.medicalAllowance)}</td></tr>
                 <tr><td>Special</td><td>{fmt2(payroll.specialAllowance)}</td></tr>
                 {payroll.overtimePay > 0 && <tr><td>Overtime</td><td>{fmt2(payroll.overtimePay)}</td></tr>}
-                <tr style={{ fontWeight: 700, borderTop: '1px solid #e2e8f0' }}>
-                  <td>Gross</td><td>{fmt2(payroll.grossEarnings)}</td>
-                </tr>
+                <tr style={{ fontWeight: 700, borderTop: '1px solid #e2e8f0' }}><td>Gross</td><td>{fmt2(payroll.grossEarnings)}</td></tr>
               </tbody>
             </table>
           </div>
@@ -667,14 +560,11 @@ function PayslipPreview({ employee, payroll }) {
                 <tr><td>Prof. Tax</td><td>{fmt2(payroll.professionalTax)}</td></tr>
                 <tr><td>Income Tax</td><td>{fmt2(payroll.incomeTax)}</td></tr>
                 {payroll.otherDeductions > 0 && <tr><td>Others</td><td>{fmt2(payroll.otherDeductions)}</td></tr>}
-                <tr style={{ fontWeight: 700, borderTop: '1px solid #e2e8f0' }}>
-                  <td>Total Deductions</td><td>{fmt2(payroll.totalDeductions)}</td>
-                </tr>
+                <tr style={{ fontWeight: 700, borderTop: '1px solid #e2e8f0' }}><td>Total Deductions</td><td>{fmt2(payroll.totalDeductions)}</td></tr>
               </tbody>
             </table>
           </div>
         </div>
-
         <div className="payslip-net">
           <div className="payslip-net-label">Net Salary Payable</div>
           <div className="payslip-net-value">₹{fmt2(payroll.netSalary)}</div>

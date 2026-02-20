@@ -41,7 +41,7 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-box">
         <div className="auth-logo">
-          <div className="auth-logo-mark">Payroll<span>Pro</span></div>
+          <div className="auth-logo-mark">Anna Pay<span>Pro</span></div>
           <div className="auth-logo-sub">Administrator Portal</div>
         </div>
 
@@ -50,8 +50,8 @@ export default function LoginPage() {
         </h2>
         <p className="auth-subtitle">
           {mode === 'login'
-            ? 'Sign in to access the payroll dashboard'
-            : 'Register to get started with PayrollPro'}
+            ? 'Sign in to access the Anna pay dashboard'
+            : 'Register to get started with Anna Pay'}
         </p>
 
         <form onSubmit={handleSubmit}>
