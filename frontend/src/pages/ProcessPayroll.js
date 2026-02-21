@@ -11,6 +11,7 @@ export default function ProcessPayroll() {
   const [step, setStep] = useState(0);
   const [empId, setEmpId] = useState('');
   const [employee, setEmployee] = useState(null);
+  const [notified, setNotified] = useState(false);
   const [payroll, setPayroll] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [initiateLoading, setInitiateLoading] = useState(false);
@@ -173,6 +174,20 @@ const handleInitiate = async () => {
     setPayslipLoading(false);
   }
 };
+const handleNotifyEmployee = async () => {
+  setPayslipLoading(true);
+  try {
+    await payrollAPI.generatePayslip(payroll._id);
+    await sendPayrollEmail('payslip');
+    toast.success('Payslip generated! Employee notified via email!');
+    setPayroll(prev => ({ ...prev, payslipGenerated: true }));
+    setNotified(true);
+  } catch (err) {
+    toast.error(err.response?.data?.message || 'Failed to notify employee');
+  } finally {
+    setPayslipLoading(false);
+  }
+};
   // ✅ Reset uses emailLog only
   const handleReset = () => {
     setStep(0);
@@ -180,6 +195,7 @@ const handleInitiate = async () => {
     setEmployee(null);
     setPayroll(null);
     setEmailLog([]);
+    setNotified(false);
     setAttendance({ presentDays: '', overtimeHours: 0, otherDeductions: 0, remarks: '' });
   };
 
@@ -399,18 +415,23 @@ const handleInitiate = async () => {
                     <span className={`status-badge ${payroll.status}`}>{payroll.status}</span>
                   </div>
                   <PayslipPreview employee={employee} payroll={payroll} />
-                  <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
-                    <button className="btn btn-teal" onClick={handleGeneratePayslip} disabled={payslipLoading} style={{ flex: 1 }}>
-                      {payslipLoading ? <><span className="spinner" style={{ width: 16, height: 16 }} /> Generating...</> : payroll.payslipGenerated ? '✅ Payslip Generated' : '📄 Generate Payslip & Notify Employee'}
-                    </button>
-                    <button className="btn btn-outline" onClick={handleReset}>Process Another Employee</button>
-                  </div>
-                  {payroll.payslipGenerated && (
-                    <div className="sms-indicator" style={{ marginTop: 12 }}>
-                      <span>📧</span>
-                      Employee has been notified via email about payslip generation.
-                    </div>
-                  )}
+                 <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+  <button
+  className="btn btn-primary"
+  onClick={handleNotifyEmployee}
+  disabled={notified}
+  style={{ flex: 1, background: notified ? 'var(--success)' : '' }}
+>
+  {notified ? '✅ Notified' : '📧 Notify Employee'}
+</button>
+  <button className="btn btn-outline" onClick={handleReset}>Process Another Employee</button>
+</div>
+{payroll.payslipGenerated && (
+  <div className="alert alert-info" style={{ marginTop: 12 }}>
+    <span>✅</span>
+    <span>Payslip generated! Click <strong>Notify Employee</strong> to send email to recipient.</span>
+  </div>
+)}
                 </div>
               )}
             </div>

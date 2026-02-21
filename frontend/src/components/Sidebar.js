@@ -28,8 +28,9 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-logo">
         <div className="logo-mark">
-          <span style={{ fontSize: 22 }}>◈</span>
-          Payroll<span style={{ color: 'var(--amber)' }}>Pro</span>
+          <div style={{ fontSize: 20, fontWeight: 2000 }}>
+  Anna Pay<span style={{ color: 'var(--amber)' }}> Pro</span>
+</div>
         </div>
         <div className="logo-subtitle">Admin Dashboard</div>
       </div>

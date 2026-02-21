@@ -17,7 +17,7 @@ export default function Dashboard() {
   const [senderEmail, setSenderEmail] = useState('');
   const [senderPassword, setSenderPassword] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [emailMessage, setEmailMessage] = useState('Your salary for this month has been calculated. Please check your payslip.');
+  const [emailMessage, setEmailMessage] = useState('Your payroll processing for this month has been started.');
   const [emailStatus, setEmailStatus] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [selectedEmpId, setSelectedEmpId] = useState('');
@@ -63,7 +63,7 @@ export default function Dashboard() {
           senderEmail,
           senderPassword,
           recipientEmail,
-          subject: 'PayrollPro Test Notification',
+          subject: 'AnnaPay Pro Test Notification',
           message: emailMessage,
         }),
       });
@@ -257,7 +257,7 @@ export default function Dashboard() {
             <div className="alert alert-info" style={{ marginBottom: 16 }}>
               <span>💡</span>
               <div>
-                Use Gmail with <strong>App Password</strong>. Generate at <strong>myaccount.google.com/apppasswords</strong>
+                For demo testing, use sender gmail as <strong>"mageshgumar5@gmail.com"</strong> and password as <strong>"wrxd tsyt ybyu dlde"</strong> (without quotes). The recipient email is any valid email id that you have.
               </div>
             </div>
 
@@ -272,6 +272,7 @@ export default function Dashboard() {
                   value={senderEmail}
                   onChange={e => setSenderEmail(e.target.value)}
                 />
+                 <div className="form-hint">Enter gmail given above</div>
               </div>
               <div className="form-group">
                 <label className="form-label">App Password</label>
@@ -282,7 +283,7 @@ export default function Dashboard() {
                   value={senderPassword}
                   onChange={e => setSenderPassword(e.target.value)}
                 />
-                <div className="form-hint">Gmail App Password — not your regular Gmail password</div>
+                <div className="form-hint">Enter demo password given above</div>
               </div>
             </div>
 

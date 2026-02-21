@@ -16,7 +16,7 @@ function ProtectedRoute({ children }) {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--navy-950)' }}>
       <div style={{ textAlign: 'center' }}>
         <span className="spinner spinner-lg" />
-        <div style={{ marginTop: 16, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', fontSize: 13 }}>Loading PayrollPro...</div>
+        <div style={{ marginTop: 16, fontFamily: 'var(--font-mono)', color: 'var(--slate-400)', fontSize: 13 }}>Loading AnnaPay Pro...</div>
       </div>
     </div>
   );
