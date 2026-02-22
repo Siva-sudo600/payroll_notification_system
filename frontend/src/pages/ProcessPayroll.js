@@ -177,17 +177,22 @@ const handleInitiate = async () => {
 const handleNotifyEmployee = async () => {
   setPayslipLoading(true);
   try {
-    await payrollAPI.generatePayslip(payroll._id);
+    if (!payroll.payslipGenerated) {
+      await payrollAPI.generatePayslip(payroll._id);
+      setPayroll(prev => ({ ...prev, payslipGenerated: true }));
+    }
     await sendPayrollEmail('payslip');
-    toast.success('Payslip generated! Employee notified via email!');
-    setPayroll(prev => ({ ...prev, payslipGenerated: true }));
+    toast.success('Employee notified via email!');
     setNotified(true);
+    setStep(4); // ✅ moves step to 4 so step 3 gets tick
   } catch (err) {
-    toast.error(err.response?.data?.message || 'Failed to notify employee');
+    console.error('Notify error:', err);
+    toast.error(err.response?.data?.message || 'Failed to notify');
   } finally {
     setPayslipLoading(false);
   }
 };
+
   // ✅ Reset uses emailLog only
   const handleReset = () => {
     setStep(0);

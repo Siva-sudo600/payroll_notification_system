@@ -170,24 +170,17 @@ router.post('/calculate', authMiddleware, async (req, res) => {
 
 // ─── GENERATE PAYSLIP ────────────────────────────────────────────────────────
 router.post('/payslip/:payrollId', authMiddleware, async (req, res) => {
-  try {
-    const payroll = await Payroll.findById(req.params.payrollId).populate('employeeRef');
-    if (!payroll) return res.status(404).json({ message: 'Payroll record not found' });
-    if (payroll.status === 'initiated') return res.status(400).json({ message: 'Salary must be calculated before generating payslip' });
+  const payroll = await Payroll.findById(req.params.payrollId).populate('employeeRef');
+  if (!payroll) return res.status(404).json({ message: 'Payroll not found' });
+  if (payroll.status === 'initiated') 
+    return res.status(400).json({ message: 'Salary must be calculated first' });
 
-    const employee = payroll.employeeRef;
+  // ✅ Allow even if already generated
+  payroll.payslipGenerated = true;
+  payroll.payslipGeneratedAt = new Date();
+  await payroll.save();
 
-    payroll.payslipGenerated = true;
-    payroll.payslipGeneratedAt = new Date();
-    await payroll.save();
-
-    // Send SMS
-    await sendSMS(employee.phone, SMS_TEMPLATES.PAYSLIP_GENERATED(employee.name, payroll.month));
-
-    res.json({ message: 'Payslip generated successfully', payroll });
-  } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
-  }
+  res.json({ message: 'Payslip generated successfully', payroll });
 });
 
 // ─── GET PAYROLL HISTORY ─────────────────────────────────────────────────────
